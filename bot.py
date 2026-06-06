@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS countdowns (
 conn.commit()
 
 # =========================
-# 🧠 STATE MEMORY
+# 🧠 STATE
 # =========================
 user_state = {}
 user_data = {}
@@ -85,8 +85,14 @@ def update_countdown(event_id, title, date):
     conn.commit()
 
 # =========================
-# 📅 MESSAGE LOGIC
+# ⏳ CALC
 # =========================
+def calc_days(date_str):
+    today = datetime.datetime.now().date()
+    target = datetime.datetime.strptime(date_str, "%Y-%m-%d").date()
+    return (target - today).days
+
+
 def get_message(title, days):
     if days < 0:
         return None
@@ -162,6 +168,7 @@ async def my_countdowns(message: Message):
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
+                    InlineKeyboardButton(text="⏳", callback_data=f"time_{event_id}"),
                     InlineKeyboardButton(text="✏️", callback_data=f"edit_{event_id}"),
                     InlineKeyboardButton(text="🗑", callback_data=f"del_{event_id}")
                 ]
@@ -171,38 +178,72 @@ async def my_countdowns(message: Message):
         await message.answer(f"📌 {title}\n📅 {date}", reply_markup=kb)
 
 # =========================
+# ⏳ TIME LEFT BUTTON
+# =========================
+@dp.callback_query(F.data.startswith("time_"))
+async def time_left(callback: CallbackQuery):
+
+    event_id = int(callback.data.split("_")[1])
+
+    cursor.execute("SELECT title, date FROM countdowns WHERE id = ?", (event_id,))
+    row = cursor.fetchone()
+
+    if not row:
+        await callback.answer("Не найдено")
+        return
+
+    title, date = row
+    days = calc_days(date)
+
+    if days < 0:
+        text = f"❌ {title} уже прошло"
+    elif days == 0:
+        text = f"⏰ {title} сегодня!"
+    elif days == 1:
+        text = f"⏰ До {title} остался 1 день"
+    else:
+        text = f"⏳ До {title} осталось {days} дней"
+
+    await callback.message.answer(text)
+    await callback.answer()
+
+# =========================
 # 🗑 DELETE
 # =========================
 @dp.callback_query(F.data.startswith("del_"))
 async def delete_cb(callback: CallbackQuery):
     event_id = int(callback.data.split("_")[1])
+
     delete_countdown(event_id)
 
     await callback.message.edit_text("🗑 Удалено")
     await callback.answer()
 
 # =========================
-# ✏️ EDIT START
+# ✏️ EDIT
 # =========================
 @dp.callback_query(F.data.startswith("edit_"))
 async def edit_cb(callback: CallbackQuery):
+
     event_id = int(callback.data.split("_")[1])
 
     user_state[callback.from_user.id] = ("edit", event_id)
 
-    await callback.message.answer("✏️ Введи новое: Название 2026-08-15")
+    await callback.message.answer("✏️ Введи: Название 2026-08-15")
     await callback.answer()
 
 # =========================
-# 📅 CREATE START
+# 📅 CREATE
 # =========================
 @dp.message(F.text == "📅 Создать отсчёт")
 async def create_start(message: Message):
-    user_state[message.from_user.id] = ("create", None)
+
+    user_state[message.from_user.id] = ("create_title", None)
+
     await message.answer("✏️ Введи название события:")
 
 # =========================
-# 💬 MAIN INPUT
+# 💬 INPUT HANDLER
 # =========================
 @dp.message(F.text)
 async def text_handler(message: Message):
@@ -211,29 +252,9 @@ async def text_handler(message: Message):
         return
 
     user_id = message.from_user.id
-
     state = user_state.get(user_id)
 
-    # ================= CREATE FLOW =================
-    if state and state[0] == "create":
-
-        if len(state) == 2 and state[1] is None:
-            user_data[user_id] = {"title": message.text}
-            user_state[user_id] = ("date", None)
-
-            years = [2026, 2027, 2028]
-
-            kb = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(text=str(y), callback_data=f"year_{y}")]
-                    for y in years
-                ]
-            )
-
-            await message.answer("📅 Выбери год:", reply_markup=kb)
-            return
-
-    # ================= EDIT FLOW =================
+    # ================= EDIT =================
     if state and state[0] == "edit":
         try:
             event_id = state[1]
@@ -246,20 +267,28 @@ async def text_handler(message: Message):
             await message.answer("✅ Обновлено!")
         except:
             await message.answer("❌ Формат: Название 2026-08-15")
+
         return
 
-    # ================= NORMAL SAVE =================
-    if " " in message.text:
-        try:
-            title, date = message.text.rsplit(" ", 1)
-            add_countdown(user_id, title, date)
+    # ================= CREATE =================
+    if state and state[0] == "create_title":
+        user_data[user_id] = {"title": message.text}
+        user_state[user_id] = ("create_date", None)
 
-            await message.answer("✅ Сохранено!")
-        except:
-            await message.answer("❌ Формат: Название 2026-08-15")
+        years = [2026, 2027, 2028]
+
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=str(y), callback_data=f"year_{y}")]
+                for y in years
+            ]
+        )
+
+        await message.answer("📅 Выбери год:", reply_markup=kb)
+        return
 
 # =========================
-# 📅 YEAR → MONTH → DAY
+# 📅 YEAR / MONTH / DAY
 # =========================
 @dp.callback_query(F.data.startswith("year_"))
 async def year_cb(callback: CallbackQuery):
@@ -270,10 +299,7 @@ async def year_cb(callback: CallbackQuery):
     months = [f"{i:02d}" for i in range(1, 13)]
 
     kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=m, callback_data=f"month_{m}")]
-            for m in months
-        ]
+        inline_keyboard=[[InlineKeyboardButton(text=m, callback_data=f"month_{m}")] for m in months]
     )
 
     await callback.message.edit_text("📆 Выбери месяц:", reply_markup=kb)
@@ -289,10 +315,7 @@ async def month_cb(callback: CallbackQuery):
     days = [f"{i:02d}" for i in range(1, 32)]
 
     kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=d, callback_data=f"day_{d}")]
-            for d in days
-        ]
+        inline_keyboard=[[InlineKeyboardButton(text=d, callback_data=f"day_{d}")] for d in days]
     )
 
     await callback.message.edit_text("📆 Выбери день:", reply_markup=kb)
@@ -317,10 +340,11 @@ async def day_cb(callback: CallbackQuery):
     await callback.message.edit_text(
         f"✅ Сохранено!\n\n📌 {data['title']}\n📅 {date}"
     )
+
     await callback.answer()
 
 # =========================
-# ▶️ START
+# ▶️ RUN
 # =========================
 async def main():
     asyncio.create_task(daily_notifications())
