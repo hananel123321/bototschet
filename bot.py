@@ -7,7 +7,7 @@ from aiogram.types import Message
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 # =========================
-# 🔑 Токен бота
+# 🔑 TOKEN
 # =========================
 TOKEN = os.getenv("BOT_TOKEN")
 
@@ -18,7 +18,7 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 # =========================
-# 🗄 База данных SQLite
+# 🗄 SQLite база
 # =========================
 conn = sqlite3.connect("countdowns.db")
 cursor = conn.cursor()
@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS countdowns (
 conn.commit()
 
 # =========================
-# 📌 Клавиатура меню
+# 📌 Клавиатура
 # =========================
 menu = ReplyKeyboardMarkup(
     keyboard=[
@@ -46,7 +46,7 @@ menu = ReplyKeyboardMarkup(
 )
 
 # =========================
-# 💾 Функции базы
+# 💾 БД функции
 # =========================
 def add_countdown(user_id: int, title: str, date: str):
     cursor.execute(
@@ -64,7 +64,7 @@ def get_countdowns(user_id: int):
     return cursor.fetchall()
 
 # =========================
-# 🚀 /start
+# 🚀 START
 # =========================
 @dp.message(F.text == "/start")
 async def start(message: Message):
@@ -74,7 +74,7 @@ async def start(message: Message):
     )
 
 # =========================
-# 📅 Создать отсчёт
+# 📅 КНОПКА СОЗДАНИЯ
 # =========================
 @dp.message(F.text == "📅 Создать отсчёт")
 async def create_countdown(message: Message):
@@ -83,13 +83,36 @@ async def create_countdown(message: Message):
     )
 
 # =========================
-# 💬 Обработка ввода
+# 📋 МОИ ОТСЧЁТЫ (ФИКС)
+# =========================
+@dp.message(F.text == "📋 Мои отсчёты")
+async def my_countdowns(message: Message):
+    data = get_countdowns(message.from_user.id)
+
+    if not data:
+        await message.answer("Пока тут пусто 😄")
+        return
+
+    text = "📋 Твои отсчёты:\n\n"
+    for title, date in data:
+        text += f"📌 {title} — {date}\n"
+
+    await message.answer(text)
+
+# =========================
+# 💬 ВВОД ОТСЧЁТА (ИСПРАВЛЕННЫЙ)
 # =========================
 @dp.message(F.text)
 async def handle_input(message: Message):
+
+    # ❌ игнорируем кнопки и команды
     if message.text.startswith("/"):
         return
 
+    if message.text in ["📋 Мои отсчёты", "📅 Создать отсчёт"]:
+        return
+
+    # ✅ сохраняем формат: "Название 2026-08-15"
     if " " in message.text:
         try:
             title, date = message.text.rsplit(" ", 1)
@@ -105,25 +128,7 @@ async def handle_input(message: Message):
             )
 
 # =========================
-# 📋 Мои отсчёты
-# =========================
-@dp.message(F.text == "📋 Мои отсчёты")
-async def my_countdowns(message: Message):
-    data = get_countdowns(message.from_user.id)
-
-    if not data:
-        await message.answer("Пока тут пусто 😄")
-        return
-
-    text = "📋 Твои отсчёты:\n\n"
-
-    for title, date in data:
-        text += f"📌 {title} — {date}\n"
-
-    await message.answer(text)
-
-# =========================
-# ▶️ Запуск
+# ▶️ RUN
 # =========================
 async def main():
     await dp.start_polling(bot)
